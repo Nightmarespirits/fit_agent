@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fit_agent/models/menu_option.dart';
 import 'package:fit_agent/routes/recipe_routes.dart';
+import 'package:fit_agent/routes/settings_routes.dart';
 
 class AppRoutes {
   static final initialRoute = "home";
@@ -24,6 +25,7 @@ class AppRoutes {
     
     // Agregar rutas adicionales que requieren argumentos
     routes.addAll(RecipeRoutes.getAdditionalRoutes());
+    routes.addAll(SettingsRoutes.getAdditionalRoutes());
     
     return routes;
   }

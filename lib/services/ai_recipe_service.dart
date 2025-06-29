@@ -2,61 +2,106 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:fit_agent/models/user.dart';
 import 'package:fit_agent/services/user_service.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:fit_agent/services/secure_api_service.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 
 /// Servicio genérico para generación de recetas con IA
 class AIRecipeService {
-  // URL de la API - Actualmente usando OpenRouter para acceder a diferentes modelos
+  // URL de la API - Endpoint para compleciones de chat
   static const String apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
-  
-  // API key 
-  static String get apiKey = dotenv.env['OPENROUTER_API_KEY'] ?? '';
+
+  // Método para obtener la API key del almacenamiento seguro
+  static Future<String> getApiKey() async {
+    final apiService = SecureApiService();
+    final key = await apiService.getApiKey();
+    return key ?? '';
+  }
 
   // Modelo de IA a utilizar
-  static const String modelId = 'mistralai/mistral-7b-instruct';
+  static const String modelId = 'mistralai/codestral-2501';
+
+  /// Verifica si hay conexión a Internet
+  static Future<bool> _verificarConexion() async {
+    try {
+      final connectivityResult = await Connectivity().checkConnectivity();
+      return connectivityResult != ConnectivityResult.none;
+    } catch (e) {
+      // Si hay un error al verificar la conectividad, asumimos que hay conexión
+      // para evitar falsos negativos, y dejamos que falle la petición a la API si realmente no hay conexión
+      return true;
+    }
+  }
 
   /// Genera una receta personalizada basada en ingredientes y perfil del usuario
-  static Future<Map<String, dynamic>> generarReceta(List<String> ingredientes) async {
+  static Future<Map<String, dynamic>> generarReceta(
+    List<String> ingredientes,
+  ) async {
     try {
+      // Verificar si hay conexión a Internet
+      bool tieneConexion = await _verificarConexion();
+      if (!tieneConexion) {
+        // Retornar mensaje de error si no hay conexión
+        return {
+          'error': true,
+          'titulo': 'Sin conexión a Internet',
+          'mensaje': 'No se pueden generar recetas sin conexión a Internet. Por favor, conéctate y vuelve a intentarlo.',
+        };
+      }
+
       // Obtener el perfil del usuario para personalizar la receta
       final UserProfile usuario = await UserService.loadUser();
-      
+
       // Crear el prompt para la generación de receta
       final String prompt = await _crearPromptReceta(ingredientes, usuario);
-      
+
       // Preparar la solicitud para la API
       final Map<String, dynamic> requestBody = {
         'model': modelId,
         'messages': [
           {
             'role': 'system',
-            'content': 'Eres un chef y nutricionista experto que crea recetas saludables, deliciosas y personalizadas según las necesidades del usuario. Siempre respondes en español.'
+            'content':
+                'Eres un chef y nutricionista experto que crea recetas saludables, deliciosas y personalizadas según las necesidades del usuario. Siempre respondes en español.',
           },
-          {
-            'role': 'user',
-            'content': prompt
-          }
+          {'role': 'user', 'content': prompt},
         ],
         'temperature': 0.7,
         'max_tokens': 1500,
         'response_format': {'type': 'json_object'},
       };
 
+      // Obtener la API key de forma segura
+      final apiKey = await getApiKey();
+      
+      // Verificar si hay una API key válida
+      if (apiKey.isEmpty) {
+        return {
+          'error': true,
+          'titulo': 'API Key no configurada',
+          'mensaje': 'No se ha configurado una API Key para el servicio de generación de recetas. Por favor, configura una API Key en la sección de ajustes.',
+        };
+      }
+      
       // Realizar la solicitud HTTP
       final response = await http.post(
         Uri.parse(apiUrl),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $apiKey',
+          'HTTP-Referer': 'https://fit-agent.app', // Requerido por OpenRouter
+          'X-Title': 'FIT Agent',
         },
         body: jsonEncode(requestBody),
       );
+
+
 
       // Verificar la respuesta
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final String contenido = data['choices'][0]['message']['content'];
-        
+
         try {
           // Intentar parsear la respuesta como JSON
           final Map<String, dynamic> recetaJson = jsonDecode(contenido);
@@ -66,99 +111,131 @@ class AIRecipeService {
           return {
             'titulo': 'Receta personalizada',
             'contenido': contenido,
-            'formato': 'markdown'
+            'formato': 'markdown',
           };
         }
       } else {
-        // Devolver una receta de ejemplo si hay error
-        return _generarRecetaEjemplo(ingredientes, usuario);
+        // Retornar mensaje de error en caso de problema con la API
+        return {
+          'error': true,
+          'titulo': 'Error en la generación de recetas',
+          'mensaje': 'Ocurrió un error al comunicarse con el servicio de IA. Por favor, intenta nuevamente más tarde.',
+          'codigo': response.statusCode,
+
+        };
       }
     } catch (e) {
-      // Devolver una receta de ejemplo si hay error
-      return _generarRecetaEjemplo(ingredientes, await UserService.loadUser());
+      // Retornar mensaje de error en caso de excepción
+      return {
+        'error': true,
+        'titulo': 'Error inesperado',
+        'mensaje': 'No se pudo generar la receta. Por favor, verifica tu conexión a Internet e intenta nuevamente.',
+        'detalles': e.toString(),
+      };
     }
   }
 
   /// Crea un prompt personalizado para la generación de receta
-  static Future<String> _crearPromptReceta(List<String> ingredientes, UserProfile usuario) async {
+  static Future<String> _crearPromptReceta(
+    List<String> ingredientes,
+    UserProfile usuario,
+  ) async {
     // Calcular IMC si hay datos disponibles
     String infoIMC = '';
     if (usuario.altura != null && usuario.peso != null && usuario.altura! > 0) {
-      final double imc = usuario.peso! / ((usuario.altura! / 100) * (usuario.altura! / 100));
+      final double imc =
+          usuario.peso! / ((usuario.altura! / 100) * (usuario.altura! / 100));
       infoIMC = 'IMC: ${imc.toStringAsFixed(1)}';
-      
+
       // Añadir recomendación basada en IMC
       if (imc < 18.5) {
-        infoIMC += ' (bajo peso). Necesita recetas con mayor aporte calórico y proteico.';
+        infoIMC +=
+            ' (bajo peso). Necesita recetas con mayor aporte calórico y proteico.';
       } else if (imc < 25) {
         infoIMC += ' (peso normal). Necesita recetas equilibradas.';
       } else if (imc < 30) {
         infoIMC += ' (sobrepeso). Necesita recetas bajas en calorías y grasas.';
       } else {
-        infoIMC += ' (obesidad). Necesita recetas muy bajas en calorías y grasas.';
+        infoIMC +=
+            ' (obesidad). Necesita recetas muy bajas en calorías y grasas.';
       }
     }
-    
+
     // Calcular edad si hay datos disponibles
     String infoEdad = '';
     if (usuario.fechaNacimiento != null) {
       final DateTime hoy = DateTime.now();
       int edad = hoy.year - usuario.fechaNacimiento!.year;
-      if (hoy.month < usuario.fechaNacimiento!.month || 
-          (hoy.month == usuario.fechaNacimiento!.month && hoy.day < usuario.fechaNacimiento!.day)) {
+      if (hoy.month < usuario.fechaNacimiento!.month ||
+          (hoy.month == usuario.fechaNacimiento!.month &&
+              hoy.day < usuario.fechaNacimiento!.day)) {
         edad--;
       }
       infoEdad = 'Edad: $edad años';
     }
-    
+
     // Recopilar preferencias dietéticas
     List<String> preferencias = [];
     if (usuario.vegetariano) preferencias.add('vegetariano');
     if (usuario.vegano) preferencias.add('vegano');
     if (usuario.sinGluten) preferencias.add('sin gluten');
     if (usuario.sinLactosa) preferencias.add('sin lactosa');
-    
+
     // Añadir alergias si existen
     String alergias = '';
     if (usuario.alergias.isNotEmpty) {
       alergias = 'Alergias: ${usuario.alergias.join(', ')}';
     }
-    
+
     // Tiempo máximo de preparación
-    String tiempoMaximo = 'Tiempo máximo de preparación: ${usuario.tiempoMaximoPreparacion.round()} minutos';
-    
+    String tiempoMaximo =
+        'Tiempo máximo de preparación: ${usuario.tiempoMaximoPreparacion.round()} minutos';
+
     // Nivel calórico
     String nivelCalorico = 'Nivel calórico preferido: ${usuario.nivelCalorico}';
-    
+
     // Calcular necesidades calóricas aproximadas (fórmula simplificada)
     String necesidadesCaloricas = '';
-    if (usuario.peso != null && usuario.altura != null && usuario.fechaNacimiento != null) {
+    if (usuario.peso != null &&
+        usuario.altura != null &&
+        usuario.fechaNacimiento != null) {
       final DateTime hoy = DateTime.now();
       int edad = hoy.year - usuario.fechaNacimiento!.year;
-      if (hoy.month < usuario.fechaNacimiento!.month || 
-          (hoy.month == usuario.fechaNacimiento!.month && hoy.day < usuario.fechaNacimiento!.day)) {
+      if (hoy.month < usuario.fechaNacimiento!.month ||
+          (hoy.month == usuario.fechaNacimiento!.month &&
+              hoy.day < usuario.fechaNacimiento!.day)) {
         edad--;
       }
-      
+
       // Fórmula simplificada (Harris-Benedict)
       double tmb = 0; // Tasa Metabólica Basal
-      
+
       // Asumimos género basado en nombre (muy simplificado, en una app real se pediría el género)
-      bool esHombre = !usuario.nombre.toLowerCase().endsWith('a'); // Simplificación
-      
+      bool esHombre =
+          !usuario.nombre.toLowerCase().endsWith('a'); // Simplificación
+
       if (esHombre) {
-        tmb = 66.5 + (13.75 * usuario.peso!) + (5.003 * usuario.altura!) - (6.75 * edad);
+        tmb =
+            66.5 +
+            (13.75 * usuario.peso!) +
+            (5.003 * usuario.altura!) -
+            (6.75 * edad);
       } else {
-        tmb = 655.1 + (9.563 * usuario.peso!) + (1.850 * usuario.altura!) - (4.676 * edad);
+        tmb =
+            655.1 +
+            (9.563 * usuario.peso!) +
+            (1.850 * usuario.altura!) -
+            (4.676 * edad);
       }
-      
+
       // Factor de actividad (asumimos moderado)
       double factorActividad = 1.55;
       double caloriasDiarias = tmb * factorActividad;
-      
+
       // Ajustar según IMC
       if (usuario.altura! > 0) {
-        final double imc = usuario.peso! / ((usuario.altura! / 100) * (usuario.altura! / 100));
+        final double imc =
+            usuario.peso! / ((usuario.altura! / 100) * (usuario.altura! / 100));
         if (imc > 25) {
           // Reducir para pérdida de peso
           caloriasDiarias *= 0.85;
@@ -167,8 +244,9 @@ class AIRecipeService {
           caloriasDiarias *= 1.15;
         }
       }
-      
-      necesidadesCaloricas = 'Necesidades calóricas diarias aproximadas: ${caloriasDiarias.round()} kcal';
+
+      necesidadesCaloricas =
+          'Necesidades calóricas diarias aproximadas: ${caloriasDiarias.round()} kcal';
     }
 
     // Construir el prompt completo
@@ -228,81 +306,6 @@ IMPORTANTE: La respuesta DEBE ser un objeto JSON válido con la estructura exact
 ''';
   }
 
-  /// Genera una receta de ejemplo cuando hay errores
-  static Map<String, dynamic> _generarRecetaEjemplo(List<String> ingredientes, UserProfile usuario) {
-    // Ajustar la receta según preferencias
-    bool esVegetariano = usuario.vegetariano || usuario.vegano;
-    
-    // Título personalizado
-    String titulo = esVegetariano 
-        ? "Salteado Vegetariano de ${ingredientes.first}"
-        : "Salteado de ${ingredientes.first} con Verduras";
-    
-    // Lista de ingredientes personalizada
-    List<Map<String, String>> listaIngredientes = [];
-    
-    // Añadir ingredientes seleccionados
-    for (String ingrediente in ingredientes) {
-      listaIngredientes.add({
-        "nombre": ingrediente,
-        "cantidad": "100 g"
-      });
-    }
-    
-    // Añadir ingredientes base
-    listaIngredientes.addAll([
-      {"nombre": "Aceite de oliva", "cantidad": "1 cucharada"},
-      {"nombre": "Ajo", "cantidad": "2 dientes"},
-      {"nombre": "Sal", "cantidad": "al gusto"},
-      {"nombre": "Pimienta", "cantidad": "al gusto"},
-      {"nombre": "Jugo de limón", "cantidad": "1 cucharada (opcional)"}
-    ]);
-    
-    // Ajustar calorías según IMC
-    String calorias = "300";
-    if (usuario.altura != null && usuario.peso != null && usuario.altura! > 0) {
-      final double imc = usuario.peso! / ((usuario.altura! / 100) * (usuario.altura! / 100));
-      if (imc > 25) {
-        calorias = "250"; // Menos calorías para sobrepeso
-      } else if (imc < 18.5) {
-        calorias = "400"; // Más calorías para bajo peso
-      }
-    }
-    
-    // Generar la receta completa
-    return {
-      "titulo": titulo,
-      "tiempo_preparacion": "10 minutos",
-      "tiempo_coccion": "10 minutos",
-      "dificultad": "Fácil",
-      "porciones": "2 porciones",
-      "ingredientes": listaIngredientes,
-      "pasos": [
-        "Paso 1: Lava y corta todos los ingredientes en trozos pequeños.",
-        "Paso 2: Calienta el aceite en una sartén a fuego medio.",
-        "Paso 3: Añade el ajo picado y saltea por 30 segundos hasta que esté fragante.",
-        "Paso 4: Agrega los ingredientes y saltea por 5-7 minutos, revolviendo ocasionalmente.",
-        "Paso 5: Sazona con sal y pimienta al gusto.",
-        "Paso 6: Añade el jugo de limón si deseas un toque cítrico.",
-        "Paso 7: Sirve caliente y disfruta."
-      ],
-      "informacion_nutricional": {
-        "calorias": "$calorias kcal por porción",
-        "proteinas": "15 g",
-        "carbohidratos": "25 g",
-        "grasas": "10 g",
-        "fibra": "5 g"
-      },
-      "consejos": [
-        "Usa aceite de oliva en spray para reducir las calorías.",
-        "Añade más verduras para aumentar el valor nutricional.",
-        "Sirve con una porción de granos integrales para una comida completa."
-      ],
-      "beneficios_salud": [
-        "Rico en vitaminas y minerales esenciales.",
-        "Bajo en grasas saturadas y azúcares añadidos.",
-        "Proporciona fibra para una buena digestión."
-      ]
-    };
-  }
+  // El método _generarRecetaEjemplo ha sido eliminado para evitar confusiones
+  // con recetas generadas sin sentido
 }

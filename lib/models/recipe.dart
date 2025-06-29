@@ -65,6 +65,7 @@ class Recipe {
   final String imagenUrl;
   final String contenidoMarkdown; // Para compatibilidad con versiones anteriores
   final List<String> ingredientesSeleccionados; // Ingredientes seleccionados por el usuario
+  final bool isLocalImage; // Indica si la imagen es local o remota
 
   Recipe({
     required this.titulo,
@@ -79,8 +80,23 @@ class Recipe {
     required this.beneficiosSalud,
     required this.ingredientesSeleccionados,
     this.contenidoMarkdown = '',
-    this.imagenUrl = 'https://cdn-icons-png.flaticon.com/512/3565/3565418.png',
+    this.imagenUrl = 'assets/images/default_recipe.png',
+    this.isLocalImage = true,
   });
+  
+  // Método para determinar si una URL es remota o local
+  static bool isRemoteUrl(String url) {
+    return url.startsWith('http://') || url.startsWith('https://');
+  }
+  
+  // Método para obtener una URL de imagen con fallback
+  static String getValidImageUrl(String? url) {
+    if (url == null || url.isEmpty) {
+      return 'assets/images/default_recipe.png';
+    }
+    
+    return url;
+  }
 
   // Propiedad para compatibilidad con código existente
   String get title => titulo;
@@ -94,6 +110,17 @@ class Recipe {
           .map((e) => e.toString())
           .toList();
     }
+    
+    // Procesar la URL de imagen
+    String imageUrl = json['imagen_url'] ?? 'assets/images/default_recipe.png';
+    bool isLocalImage = !isRemoteUrl(imageUrl);
+    
+    // Si la URL es inválida o está vacía, usar imagen por defecto
+    if (imageUrl.isEmpty) {
+      imageUrl = 'assets/images/default_recipe.png';
+      isLocalImage = true;
+    }
+    
     return Recipe(
       titulo: json['titulo'] ?? 'Receta Saludable',
       tiempoPreparacion: json['tiempo_preparacion'] ?? '0 minutos',
@@ -116,6 +143,8 @@ class Recipe {
       consejos: (json['consejos'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
       beneficiosSalud: (json['beneficios_salud'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
       ingredientesSeleccionados: ingredientesSeleccionados,
+      imagenUrl: imageUrl,
+      isLocalImage: isLocalImage,
     );
   }
 
@@ -143,6 +172,8 @@ class Recipe {
       beneficiosSalud: [],
       ingredientesSeleccionados: ingredientes,
       contenidoMarkdown: markdownContent,
+      imagenUrl: 'assets/images/default_recipe.png',
+      isLocalImage: true,
     );
   }
 
@@ -231,5 +262,6 @@ class Recipe {
     'imagen_url': imagenUrl,
     'contenido_markdown': contenidoMarkdown,
     'ingredientes_seleccionados': ingredientesSeleccionados,
+    'is_local_image': isLocalImage ? 1 : 0,
   };
 }

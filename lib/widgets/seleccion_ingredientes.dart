@@ -327,9 +327,11 @@ class _SeleccionIngredientesState extends State<SeleccionIngredientes> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Selecciona tus ingredientes:',
-                style: Theme.of(context).textTheme.titleMedium,
+              Expanded(
+                child: Text(
+                  'Selecciona tus ingredientes:',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
               ),
               IconButton(
                 icon: Icon(

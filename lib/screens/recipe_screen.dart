@@ -90,6 +90,20 @@ class _RecipeScreenState extends State<RecipeScreen> {
       
       Map<String, dynamic> recipeJson = await AIRecipeService.generarReceta(nombresIngredientes);
 
+      // Verificar si hay un error en la respuesta
+      if (recipeJson.containsKey('error') && recipeJson['error'] == true) {
+        // Mostrar mensaje de error
+        setState(() {
+          _recipeContent = '''# ${recipeJson['titulo']}
+${recipeJson['mensaje']}''';
+          _recipe = Recipe.fromMarkdown(_recipeContent, nombresIngredientes);
+          _isLoading = false;
+          _checkingFavorite = false;
+        });
+        return;
+      }
+
+      // Si no hay error, procesar la receta normalmente
       setState(() {
         _recipe = Recipe.fromJson(recipeJson);
         _recipeContent = _recipe.toMarkdown();
@@ -200,16 +214,17 @@ class _RecipeScreenState extends State<RecipeScreen> {
               ),
             )
           : _buildRecipeContent(),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          // Aquí podrías implementar la funcionalidad para guardar la receta
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Receta guardada')),
-          );
-        },
-        tooltip: 'Guardar receta',
-        child: const Icon(Icons.favorite),
-      ),
+      floatingActionButton: _recipeContent.isNotEmpty && !_isLoading
+          ? FloatingActionButton(
+              onPressed: _toggleFavorite,
+              backgroundColor: _isFavorite ? AppTheme.rojoAlerta : AppTheme.rojoAlerta.withOpacity(0.5),
+              tooltip: _isFavorite ? 'Quitar de favoritos' : 'Guardar en favoritos',
+              child: Icon(
+                _isFavorite ? Icons.favorite : Icons.favorite_border,
+                color: Colors.white,
+              ),
+            )
+          : null,
       bottomNavigationBar: const CustomBottomNavigation(),
     );
   }
@@ -349,7 +364,6 @@ class _RecipeScreenState extends State<RecipeScreen> {
               ],
             ),
           ),
-          _buildFavoriteButton(),
         ],
       ),
     );

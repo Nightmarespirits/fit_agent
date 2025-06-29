@@ -3,6 +3,7 @@ import 'package:fit_agent/widgets/custom_bottom_navigation.dart';
 import 'package:fit_agent/themes/app_theme.dart';
 import 'package:fit_agent/models/user.dart';
 import 'package:fit_agent/services/user_service.dart';
+import 'package:fit_agent/services/secure_api_service.dart';
 
 class PreferencesScreen extends StatefulWidget {
   const PreferencesScreen({super.key});
@@ -25,6 +26,10 @@ class _PreferencesScreenState extends State<PreferencesScreen> {
   bool _isLoading = true;
   bool _isSaving = false;
   late UserProfile _userProfile;
+  
+  // Estado de la API Key
+  bool _hasApiKey = false;
+  final SecureApiService _apiService = SecureApiService();
 
   // Opciones para nivel de calorías
   final List<String> _nivelesCaloricas = ['Bajo', 'Medio', 'Alto'];
@@ -43,6 +48,15 @@ class _PreferencesScreenState extends State<PreferencesScreen> {
   void initState() {
     super.initState();
     _cargarPreferencias();
+    _checkApiKeyStatus();
+  }
+  
+  // Comprobar si hay API key configurada
+  Future<void> _checkApiKeyStatus() async {
+    final hasKey = await _apiService.hasApiKey();
+    setState(() {
+      _hasApiKey = hasKey;
+    });
   }
   
   // Cargar las preferencias del usuario
@@ -304,6 +318,50 @@ class _PreferencesScreenState extends State<PreferencesScreen> {
                   }).toList(),
                 ),
               ],
+            ),
+            
+            const SizedBox(height: 32),
+            
+            // Sección de configuración de la aplicación
+            const Divider(height: 40),
+            
+            const Text(
+              'Configuración de la Aplicación',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.verdeOscuro,
+              ),
+            ),
+            const SizedBox(height: 16),
+            
+            // API Key de OpenRouter
+            Card(
+              margin: const EdgeInsets.only(bottom: 16),
+              color: AppTheme.grisClaro,
+              elevation: 0,
+              child: ListTile(
+                title: const Text(
+                  'API Key de OpenRouter',
+                  style: TextStyle(fontWeight: FontWeight.w500),
+                ),
+                subtitle: Text(
+                  _hasApiKey 
+                      ? 'Configurada' 
+                      : 'No configurada - Las recetas no se generarán sin una API key',
+                  style: TextStyle(
+                    color: _hasApiKey ? Colors.green : Colors.orange,
+                  ),
+                ),
+                trailing: const Icon(Icons.keyboard_arrow_right),
+                leading: const Icon(Icons.key),
+                onTap: () {
+                  Navigator.of(context).pushNamed('api-key').then((_) {
+                    // Actualizar el estado al volver
+                    _checkApiKeyStatus();
+                  });
+                },
+              ),
             ),
             
             const SizedBox(height: 32),
